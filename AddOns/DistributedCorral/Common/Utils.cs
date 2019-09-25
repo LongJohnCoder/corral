@@ -45,6 +45,8 @@ namespace Common
         public static string BlobFolder = "fileuploads";
         public static string DotFolder = "dotfiles";
         public static string ResultFolder = "resultfiles";
+        public static string SimulatedResultFolder = "simresultfiles";
+        public static string SimulatedDotFolder = "simdotfiles";
         public static string OutcomeFolder = "outcome";
         private static int MaxLen = 8;
 

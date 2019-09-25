@@ -145,6 +145,9 @@ namespace cba.Util
         public static string SlowSplit = "slow";
         public static string AskStatus = "status";
         public static string Redo = "redo";
+        public static string TgInfo = "tg";
+        public static string RequestNew = "reqnewct";
+        public static string RequestCTQCount = "count";
 
         public static string InputFile = "file";
         public static string LoadFile = "loadFl";

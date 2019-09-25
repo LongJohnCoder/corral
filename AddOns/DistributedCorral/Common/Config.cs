@@ -10,8 +10,9 @@ namespace Common
     {
         public static bool ShortTransaction = false;
         public static bool PreLoading = true;
+        public static bool simulate = true; // if simulate is set to true then set DistributedCorral\ApplicationParameters\Local.5Node.xml\<Parameter Name="ClientStateful_PartitionCount" Value="1" />
         public static int CallTreeQueueSize = 1000;
-        public static int CallTreeQueueRate = 10;
+        public static int CallTreeQueueRate = 1000;
         public static int RecursionBound = 3;
         //public static string InliningAlgorithm = "/newStratifiedInlining:splitpar";
         public static string InliningAlgorithm = "/newStratifiedInlining:ucsplitpar";
@@ -29,8 +30,8 @@ namespace Common
         public static bool VerifyUnsafe = false;
         public static int DefaultInterval = 50;
         public static int FirstSplitDeadline = 20;
-        public static string WriteResultLocally = "Results.csv";
-        public static string WriteOutcomeLocally = "Outcomes.csv";
-        public static string WriteDotFilesLocally = "Dotfiles.csv";
+        public static string WriteResultLocally = "";
+        public static string WriteOutcomeLocally = "";
+        public static string WriteDotFilesLocally = "";
     }
 }

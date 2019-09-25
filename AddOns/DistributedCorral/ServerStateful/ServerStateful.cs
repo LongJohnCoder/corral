@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Fabric;
@@ -19,6 +20,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Sandboxable.Microsoft.WindowsAzure.Storage;
 using Sandboxable.Microsoft.WindowsAzure.Storage.Blob;
+using Microsoft.ServiceFabric.Data;
 
 namespace ServerStateful
 { 
@@ -34,12 +36,218 @@ namespace ServerStateful
         private CloudStorageAccount csa = null;
         private CloudBlobContainer blobContainer = null;
         private TimeGraph tg = null;
+        private TimeGraphSim tgs = null;
         private int numSplit = 0;
-         
+        private DateTime startTimeSim = DateTime.Now;
+        private static string lastTaskSent;
+        
+        /*class TimeGraphSim
+        {
+            Dictionary<int, string> Nodes;
+            Dictionary<string, int> NodesReverse;
+            Dictionary<int, HashSet<Tuple<int, string, double>>> Edges;
+            Stack<int> currNodeStack;
+            DateTime startTime;
+            static int dmpCnt = 0;
+            public int numPartitions;
+
+            public TimeGraphSim()
+            {
+                currNodeStack = new Stack<int>();
+                Nodes = new Dictionary<int, string>();
+                NodesReverse = new Dictionary<string, int>();
+                Edges = new Dictionary<int, HashSet<Tuple<int, string, double>>>();
+                startTime = DateTime.Now;
+                numPartitions = 0;
+                //Nodes.Add(0, "main");
+                //Push(0);
+            }
+
+            public int Count()
+            {
+                return Nodes.Count;
+            }
+
+
+            private void AddEdge(int n1, int n2, string label1, double label2)
+            {
+                if (!Edges.ContainsKey(n1))
+                    Edges.Add(n1, new HashSet<Tuple<int, string, double>>());
+                Edges[n1].Add(Tuple.Create(n2, label1, label2));
+            }
+
+            public string ToDot()
+            {
+                string str;
+                str = "digraph TG {" + "\n";
+                foreach (var tup in Nodes)
+                {
+                    str = str + ("{0} [label=\"{1}\"]\n", tup.Key, tup.Value);
+                }
+                foreach (var tup in Edges)
+                {
+                    foreach (var tgt in tup.Value)
+                        str = str + ("{0} -> {1} [label=\"{2} {3}\"]\n", tup.Key, tgt.Item1, tgt.Item2, tgt.Item3.ToString("F2"));
+                }
+                str = str + "}";
+                //using (var fs = new System.IO.StreamWriter("tg" + (dmpCnt++) + ".dot"))
+                //{
+                //    fs.WriteLine("digraph TG {");
+                //
+                //    foreach (var tup in Nodes)
+                //    {
+                //        fs.WriteLine("{0} [label=\"{1}\"]", tup.Key, tup.Value);
+                //    }
+                //
+                //    foreach (var tup in Edges)
+                //    {
+                //        foreach (var tgt in tup.Value)
+                //            fs.WriteLine("{0} -> {1} [label=\"{2} {3}\"]", tup.Key, tgt.Item1, tgt.Item2, tgt.Item3.ToString("F2"));
+                //    }
+                //
+                //    fs.WriteLine("}");
+                //
+                //}
+                return str;
+            }
+
+            void Push(int node)
+            {
+                currNodeStack.Push(node);
+            }
+
+            public void Pop(int n)
+            {
+                while (n > 0) { n--; currNodeStack.Pop(); }
+                startTime = DateTime.Now;
+            }
+
+            //public void AddEdge(string tgt, string label)
+            //{
+            //   numPartitions++;
+            //    var tgtnode = Nodes.Count;
+            //    Nodes.Add(tgtnode, tgt);
+
+            //    AddEdge(currNodeStack.Peek(), tgtnode, label, (DateTime.Now - startTime).TotalSeconds);
+            //    Push(tgtnode);
+            //    startTime = DateTime.Now;
+            //}
+
+            public void AddEdge(string parent, string child, double timeTaken)
+            {
+                Log.WriteLine(Log.Info, string.Format(parent + " " + child + " " + timeTaken.ToString()));
+                numPartitions++;
+                if (Nodes.Values.Contains(parent))
+                {
+                    Log.WriteLine(Log.Info, string.Format("inside if"));
+                    var tgtnode = Nodes.Count;
+                    Nodes.Add(tgtnode, child);
+                    NodesReverse.Add(child, tgtnode);
+                    AddEdge(NodesReverse[parent], tgtnode, "split", timeTaken);
+                }
+                else
+                {
+                    Log.WriteLine(Log.Info, string.Format("inside else"));
+                    var srcnode = Nodes.Count;
+                    Nodes.Add(srcnode, parent);
+                    NodesReverse.Add(parent, srcnode);
+                    var tgtnode = Nodes.Count;
+                    Nodes.Add(tgtnode, child);
+                    NodesReverse.Add(child, tgtnode);
+                    AddEdge(srcnode, tgtnode, "split", timeTaken);
+                }
+            }
+             
+            //public void AddEdgeDone(string label)
+            //{
+            //    numPartitions++;
+            //    var tgtnode = Nodes.Count;
+            //    Nodes.Add(tgtnode, "Done");
+            //
+            //    AddEdge(currNodeStack.Peek(), tgtnode, label, (DateTime.Now - startTime).TotalSeconds);
+            //    startTime = DateTime.Now;
+            //}
+
+            public double ComputeTimes(int nthreads)
+            {
+                // First, construct the time graph properly with times on nodes (not edges)
+                Dictionary<int, double> nodeToTime = new Dictionary<int, double>();
+                var nodeToChildren = new Dictionary<int, HashSet<int>>();
+
+                // Nodes
+                foreach (var tup in Edges)
+                    foreach (var e in tup.Value)
+                        nodeToTime.Add(e.Item1, e.Item3);
+
+                //nodeToTime.Keys.Iter(n => nodeToChildren.Add(n, new HashSet<int>()));
+                foreach (var n in nodeToTime.Keys)
+                    nodeToChildren.Add(n, new HashSet<int>());
+
+                // Edges
+                foreach (var tup in Edges)
+                    foreach (var e in tup.Value)
+                    {
+                        var n1 = tup.Key;
+                        var n2 = e.Item1;
+                        if (!nodeToTime.ContainsKey(n1) || !nodeToTime.ContainsKey(n2))
+                            continue;
+                        nodeToChildren[n1].Add(n2);
+                    }
+
+                var rand = new Random((int)DateTime.Now.Ticks);
+
+                var root = Edges[0].First().Item1;
+                var isZero = new Func<double, bool>(d => d < 0.00001);
+                var isNull = new Func<Tuple<int, double>, bool>(t => t.Item1 < 0);
+
+                var threads = new Tuple<int, double>[nthreads];
+                for (int i = 0; i < nthreads; i++)
+                    threads[i] = Tuple.Create(-1, 0.0);
+
+                var totaltime = 0.0;
+                var available = new List<int>();
+                available.Add(root);
+
+                while (true)
+                {
+                    // Allocate to idle threads
+                    for (int i = 0; i < nthreads; i++)
+                    {
+                        if (!isNull(threads[i])) continue;
+                        if (!available.Any()) continue;
+                        var index = rand.Next(available.Count);
+                        threads[i] = Tuple.Create(available[index], nodeToTime[available[index]]);
+                        available.RemoveAt(index);
+                    }
+                    if (threads.All(t => isNull(t))) break;
+
+                    // Run
+                    var min = threads.Where(t => !isNull(t)).Min(t => t.Item2);
+                    totaltime += min;
+                    for (int i = 0; i < nthreads; i++)
+                    {
+                        if (isNull(threads[i])) continue;
+                        var tleft = threads[i].Item2 - min;
+                        if (isZero(tleft))
+                        {
+                            //nodeToChildren[threads[i].Item1].Iter(n => available.Add(n));
+                            foreach (var n in nodeToChildren[threads[i].Item1])
+                                available.Add(n);
+                            threads[i] = Tuple.Create(-1, 0.0);
+                        }
+                        else
+                            threads[i] = Tuple.Create(threads[i].Item1, tleft);
+                    }
+                }
+
+                return totaltime;
+            }
+        }*/
+
         public ServerStateful(StatefulServiceContext context)
             : base(context)
         {
-            ServiceEventSource.Current.ServiceInstanceConstructed(ServiceEventSourceName);
+            ServiceEventSource.Current.ServiceInstanceConstructed(ServiceEventSourceName);            
         } 
 
         protected override IEnumerable<ServiceReplicaListener> CreateServiceReplicaListeners()
@@ -59,6 +267,7 @@ namespace ServerStateful
                 // message is large, send reply immediately 
                 var body = new StreamReader(context.Request.InputStream).ReadToEnd();
                 msgContent = Common.Utils.ParseMsg(body.Replace("\"", ""));
+                //Log.WriteLine(Log.Info, string.Format("Received Large message"));
             }
             else
             {
@@ -66,11 +275,12 @@ namespace ServerStateful
                 foreach (var key in allKeys)
                 {
                     msgContent.Add(key, context.Request.QueryString[key].ToString());
+                    //Log.WriteLine(Log.Info, string.Format("Received message: " + context.Request.QueryString[key].ToString()));
                 }
             }
 
             //  handle msg
-            if (msgContent.ContainsKey(HttpUtil.InputFile) && !msgContent.ContainsKey(HttpUtil.VerificationOutcome) && !msgContent.ContainsKey(HttpUtil.Restart)) 
+            if (msgContent.ContainsKey(HttpUtil.InputFile) && !msgContent.ContainsKey(HttpUtil.VerificationOutcome) && !msgContent.ContainsKey(HttpUtil.Restart))
                 await AddInputFile(context, msgContent);
 
             else if (msgContent.ContainsKey(HttpUtil.Avail))
@@ -93,6 +303,15 @@ namespace ServerStateful
 
             else if (msgContent.ContainsKey(HttpUtil.Stats))
                 ReceiveStats(context, msgContent, cancellationToken);
+
+            else if (msgContent.ContainsKey(HttpUtil.TgInfo))
+                ReceiveTGInfo(context, msgContent);
+
+            else if (msgContent.ContainsKey(HttpUtil.RequestNew))
+                await SendNewCallTree(context, msgContent);
+
+            else if (msgContent.ContainsKey(HttpUtil.RequestCTQCount))
+                await ReceiveRequestCTQCount(context, msgContent);
 
             if (msgContent.ContainsKey(HttpUtil.InputFile) && msgContent.ContainsKey(HttpUtil.Restart))
                 await ReceiveResetRequest(context, msgContent);
@@ -126,8 +345,10 @@ namespace ServerStateful
         {
             //numSplit = 0;
             string fileDir = msgContent[HttpUtil.InputFile];
-            Log.WriteLine(string.Format("Input file: {0}", fileDir)); 
-
+            Log.WriteLine(string.Format("Input file: {0}", fileDir));
+            //lastTaskSent = "main_" + fileDir;
+            //Log.WriteLine(Log.Info, string.Format("set to {0}", lastTaskSent));
+            startTimeSim = DateTime.Now;
             IReliableConcurrentQueue<string> inputQueue = await StateManager.GetOrAddAsync<IReliableConcurrentQueue<string>>(Common.Utils.InputQueue);
             while (true)
             {
@@ -166,6 +387,40 @@ namespace ServerStateful
             { 
                 Common.Utils.ResponseHttp(context, HttpUtil.No);
             }
+        }
+
+        private void ReceiveTGInfo(HttpListenerContext context, Dictionary<string, string> msgContent)
+        {
+            string info = msgContent[HttpUtil.TgInfo];
+            string[] data = info.Split(',');
+            int parent = Convert.ToInt32(data[0]);
+            int child = Convert.ToInt32(data[1]);
+            string decision = data[2];
+            double timeTaken = Convert.ToDouble(data[3]);
+            tgs.AddEdge(parent, child, decision, timeTaken);
+            //Log.WriteLine(Log.Info, string.Format(data[0] + " " + data[1] + " " + data[2] + " " + data[3]));
+            Common.Utils.ResponseHttp(context);
+            /*var result = await ActiveCheckAvailability(taskID);
+
+            if (result)
+            {
+                Common.Utils.ResponseHttp(context, HttpUtil.Yes);
+            }
+            else
+            {
+                Common.Utils.ResponseHttp(context, HttpUtil.No);
+            }*/
+        }
+
+        private async Task ReceiveRequestCTQCount(HttpListenerContext context, Dictionary<string, string> msgContent)
+        {
+            string info = msgContent[HttpUtil.RequestCTQCount];            
+            int loc = Convert.ToInt32(info);
+            IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState> callTreeQueue =
+                await StateManager.GetOrAddAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
+            
+            Log.WriteLine(Log.Info, string.Format("Location : " + loc + " " + "QCount : " + callTreeQueue.Count));
+            Common.Utils.ResponseHttp(context);            
         }
 
         /**
@@ -292,7 +547,8 @@ namespace ServerStateful
             }
 
             tg.AddEdgeDone(sender);
-            
+            //if (Config.simulate)
+            //    tgs.AddEdge(lastTaskSent, "Done", (DateTime.Now - startTimeSim).TotalSeconds);
             IReliableDictionary<string, Tuple<bool, string>> clientState = await StateManager.GetOrAddAsync<IReliableDictionary<string, Tuple<bool, string>>>(Common.Utils.ClientStates);
             IReliableDictionary<string, string> supporterMap = await StateManager.GetOrAddAsync<IReliableDictionary<string, string>>(Common.Utils.Supporter);
 
@@ -397,9 +653,17 @@ namespace ServerStateful
                         WriteOutcome(Common.Utils.DecodeStatus(result));
                         await CleanVerification();
                         await SendStopMsgs(cancellationToken);
+                        if (Config.simulate)
+                        {
+                            WriteSimulatedResult();
+                            WriteSimulatedDotFile();
+                        }
                         if (Config.GenGraph)
                             WriteDotFile();
                         //numSplit = 0;
+                        //lastTaskSent = "new";
+                        //Log.WriteLine(Log.Info, string.Format("set to {0}", lastTaskSent));
+                        startTimeSim = DateTime.Now;
                     }
                 }
             }
@@ -424,6 +688,9 @@ namespace ServerStateful
         private async Task AskStatus(HttpListenerContext context, Dictionary<string, string> msgContent)
         {
             string taskID = msgContent[HttpUtil.AskStatus];
+            /*ConditionalValue<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>> x = await StateManager.TryGetAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
+            if (!x.HasValue)
+                Log.WriteLine(Log.Info, string.Format("not found queue"));*/
             IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState> callTreeQueue =
                 await StateManager.GetOrAddAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
             if (callTreeQueue.Count < Config.CallTreeQueueSize)            
@@ -437,7 +704,8 @@ namespace ServerStateful
         }
 
         private async Task AddNewCallTree(HttpListenerContext context, Dictionary<string, string> msgContent)
-        { 
+        {
+            Log.WriteLine(Log.Info, string.Format("Inside addnewcalltree"));
             string callTreeName = msgContent[HttpUtil.NewCallTree];
             string fileName = msgContent[HttpUtil.FileName];
             if (!Common.Utils.GetInputFileName(fileName).Equals(Common.Utils.GetInputFileName(workingFile)) && workingFile.Length > 0)
@@ -448,9 +716,16 @@ namespace ServerStateful
             }
 
             //bool senderAvailable = await CheckSenderStatus(callTreeName);
-            bool senderAvailable = !verificationFinished;
+            //bool senderAvailable = !verificationFinished;
+            bool senderAvailable = true;
+            /*ConditionalValue<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>> x = await StateManager.TryGetAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
+            if (!x.HasValue)
+                Log.WriteLine(Log.Info, string.Format("not found queue"));
+            else
+                Log.WriteLine(Log.Info, string.Format("Adding in queue1. Count: " + x.Value.Count));*/
             IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState> callTreeQueue =
-                await StateManager.GetOrAddAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue); 
+                await StateManager.GetOrAddAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
+            //Log.WriteLine(Log.Info, string.Format("Adding in queue2. Count: " + callTreeQueue.Count));
 
             string parentTask = Common.Utils.GetParentTask(callTreeName);
 
@@ -465,7 +740,11 @@ namespace ServerStateful
                 HashSet<string> callSites = Common.Utils.ParseCallSitesMsg(callSitesMsg);
                 List<Tuple<string, int>> splitNodes = Common.Utils.ParseSplitNodesMsg(splitNodesMsg);
                 var senderID = await GetSenderID(callTreeName);
-                var newCallTree = new BoogieVerifyOptions.SplitState(senderID, callTreeName, callSites, splitNodes); 
+                var newCallTree = new BoogieVerifyOptions.SplitState(senderID, callTreeName, callSites, splitNodes);
+                //Log.WriteLine(Log.Info, string.Format("Inside if in addnewcalltree"));
+                //Log.WriteLine(Log.Info, string.Format(lastTaskSent + " " + callTreeName + " " + (DateTime.Now - startTimeSim).TotalSeconds.ToString()));
+                //if (Config.simulate)
+                //    tgs.AddEdge(lastTaskSent, callTreeName, (DateTime.Now-startTimeSim).TotalSeconds);
                 while (true)
                 {
                     try
@@ -554,6 +833,9 @@ namespace ServerStateful
         private async Task AddSplitNodes(HttpListenerContext context, Dictionary<string, string> msgContent)
         {
             Debug.Assert(false);
+            /*ConditionalValue<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>> x = await StateManager.TryGetAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
+            if (!x.HasValue)
+                Log.WriteLine(Log.Info, string.Format("not found queue"));*/
             IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState> callTreeQueue =
                 await StateManager.GetOrAddAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
             IReliableDictionary<string, bool> callTreeDictionary = await StateManager.GetOrAddAsync<IReliableDictionary<string, bool>>(Common.Utils.CallTreeDictionary);
@@ -614,10 +896,17 @@ namespace ServerStateful
             List<string> clientNames = new List<string>();
             partitionList.ToList().ForEach(e => clientNames.Add(e.PartitionInformation.Id.ToString()));
             tg = new TimeGraph(clientNames);
-
+            tgs = new TimeGraphSim();
+            startTimeSim = DateTime.Now;
+            //lastTaskSent = "main";
+            //Log.WriteLine(Log.Info, string.Format("set to main"));
             Config.CallTreeQueueSize = partitionList.Count * Config.CallTreeQueueRate;
              
             IReliableConcurrentQueue<string> inputQueue = await StateManager.GetOrAddAsync<IReliableConcurrentQueue<string>>(Common.Utils.InputQueue);
+            //ConditionalValue<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>> x = await StateManager.TryGetAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
+            //if (!x.HasValue)
+            //    Log.WriteLine(Log.Info, string.Format("not found queue"));
+            
             IReliableConcurrentQueue<BoogieVerifyOptions.SplitState> callTreeQueue = await StateManager.GetOrAddAsync<IReliableConcurrentQueue<BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
             IReliableDictionary<string, Tuple<bool, string>> clientState = await StateManager.GetOrAddAsync<IReliableDictionary<string, Tuple<bool, string>>>(Common.Utils.ClientStates);
             IReliableDictionary<string, string> taskMapper = await StateManager.GetOrAddAsync<IReliableDictionary<string, string>>(Common.Utils.TaskMapper);
@@ -712,13 +1001,16 @@ namespace ServerStateful
 
                 // if it doesnt split after some time
                 if ((callTreeQueue.Count == 0 && fileLoaded) || verificationFinished)
-                { 
+                {
+                    //Log.WriteLine(Log.Info, string.Format("inside doesn't split1"));
                     var timeUsed = (DateTime.Now - startTime).TotalSeconds;
                     if (timeUsed > Config.FirstSplitDeadline || verificationFinished)
-                    { 
+                    {
+                        //Log.WriteLine(Log.Info, string.Format("inside doesn't split2"));
                         bool completed = await CheckCompleteCompletion(prtCnt++, cancellationToken);
                         if (completed || verificationFinished)
-                        { 
+                        {
+                            //Log.WriteLine(Log.Info, string.Format("inside doesn't split3"));
                             if (timeUsed > 500 && Config.AutoRerunningExperiment)
                                 errorTests.Add(workingFile);
                             await CleanVerification();
@@ -726,9 +1018,11 @@ namespace ServerStateful
 
                             if (completed)
                             {
+                                //Log.WriteLine(Log.Info, string.Format("inside doesn't split4"));
                                 var tmp = await SendFinishMsgs(cancellationToken);
                                 if (tmp)
                                 {
+                                    //Log.WriteLine(Log.Info, string.Format("inside doesn't split5"));
                                     fileLoaded = false;
                                     verificationFinished = false; 
                                     total++;
@@ -752,6 +1046,7 @@ namespace ServerStateful
                         }
                         else if (prtCnt % Config.DefaultInterval == 0 && !verificationFinished)
                         {
+                            //Log.WriteLine(Log.Info, string.Format("inside doesn't split6"));
                             SendFastSplitMsgs(cancellationToken);
                         }
                     }
@@ -759,6 +1054,7 @@ namespace ServerStateful
 
                 if (!isTimedout)
                 {
+                    //Log.WriteLine(Log.Info, string.Format("inside not timed out"));
                     try
                     {
                         using (var tx = this.StateManager.CreateTransaction())
@@ -790,8 +1086,10 @@ namespace ServerStateful
                                     #region find an available callTree in queue
                                     if (calltree == null || reserved == false)
                                     {
+                                        //Log.WriteLine(Log.Info, string.Format("inside find avl calltree1"));
                                         if (calltree != null)
                                         {
+                                            //Log.WriteLine(Log.Info, string.Format("inside find avl calltree2 | " + calltree.Name));
                                             var available = true;
                                             if (HttpUtil.ActiveServer)
                                                 available = await PassiveCheckAvailability(calltree.Name, cancellationToken);
@@ -800,15 +1098,17 @@ namespace ServerStateful
                                             if (!available)
                                                 ResetSelection();
                                             else
-                                                reserved = true;
+                                                reserved = true;                                            
                                         }
 
                                         while (calltree == null && callTreeQueue.Count > 0)
                                         {
+                                            //Log.WriteLine(Log.Info, string.Format("inside find avl calltree3"));
                                             var value = await callTreeQueue.TryDequeueAsync(tx);
 
                                             if (value.HasValue)
                                             {
+                                                //Log.WriteLine(Log.Info, string.Format("inside find avl calltree4"));
                                                 var available = true;
                                                 if (HttpUtil.ActiveServer)
                                                     available = await PassiveCheckAvailability(value.Value.Name, cancellationToken);
@@ -816,7 +1116,10 @@ namespace ServerStateful
                                                     available = await ActiveCheckAvailability(value.Value.Name);
                                                 if (available)
                                                 {
+                                                    //Log.WriteLine(Log.Info, string.Format("inside find avl calltree5"));
                                                     calltree = value.Value.Clone();
+                                                    //lastTaskSent = calltree.Name;
+                                                    //Log.WriteLine(Log.Info, string.Format("lastTaskSent to {0}",lastTaskSent));
                                                     Log.WriteLine(Log.Info, string.Format("CT {0} is available", value.Value.Name));
                                                     reserved = true;
                                                     if (Config.OptimizationMode == 2)
@@ -846,6 +1149,8 @@ namespace ServerStateful
 
                                     if (calltree != null)
                                     {
+                                        //Log.WriteLine(Log.Info, string.Format("inside calltree found1"));
+                                        //lastTaskSent = calltree.Name;
                                         #region send the calltree to selected client
                                         if (Config.OptimizationMode == 2)
                                         {
@@ -885,10 +1190,19 @@ namespace ServerStateful
                                         await clientState.AddOrUpdateAsync(tx, partition.Info.Id.ToString(), new Tuple<bool, string>(true, calltree.Name), (key, oldValue) => new Tuple<bool, string>(true, calltree.Name));
                                         await taskMapper.AddOrUpdateAsync(tx, calltree.Name, partition.Info.Id.ToString(), (key, oldValue) => partition.Info.Id.ToString());
                                         tg.AddEdge(calltree.Author, partition.Info.Id.ToString(), calltree.Name);
+                                        //lastTaskSent = calltree.Name;
+                                        //Log.WriteLine(Log.Info, string.Format("set to {0}", lastTaskSent));
                                         await tx.CommitAsync();
                                         committed = true;
+                                        startTimeSim = DateTime.Now;
                                         await SendCallTree(this.httpClient, address, calltree);
                                         ResetSelection();
+                                        Log.WriteLine(Log.Info, string.Format("CTs Left: " + callTreeQueue.Count));
+                                        /*ConditionalValue<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>> x1 = await StateManager.TryGetAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
+                                        if (!x1.HasValue)
+                                            Log.WriteLine(Log.Info, string.Format("not found queue"));
+                                        else
+                                            Log.WriteLine(Log.Info, string.Format("Adding in queue0. Count: " + x1.Value.Count));*/
                                         #endregion
                                     }
                                     else if (callTreeQueue.Count == 0 && fileLoaded)
@@ -1034,6 +1348,7 @@ namespace ServerStateful
                                             await tx.CommitAsync();
                                             committed = true;
                                             tg = new TimeGraph(clientNames);
+                                            tgs = new TimeGraphSim();
                                             await SendRequest(this.httpClient, address, HttpUtil.StartVerification, workingFile);
                                             fileLoaded = true;
                                             verificationFinished = false;
@@ -1236,6 +1551,91 @@ namespace ServerStateful
             }
         }
 
+        private void WriteSimulatedResult()
+        {
+            try
+            {
+                //if (Config.WriteResultLocally.Length == 0)
+                {
+                    CloudStorageAccount csa = CloudStorageAccount.Parse(Common.Utils.BlobAddress);
+                    var tmpName = Path.GetFileName(workingFile.Substring(workingFile.LastIndexOf("\\") + 1)) + ".txt";
+                    var blobName = new FileInfo(tmpName).Name;
+
+                    var blobClient = csa.CreateCloudBlobClient();
+                    var container = blobClient.GetContainerReference(Common.Utils.SimulatedResultFolder);
+                    container.CreateIfNotExists();
+                    var uploadName = blobName;
+                    CloudBlockBlob blockBlob = container.GetBlockBlobReference(uploadName);
+                    string str = "SplitSearch: ";
+                    //double singleCoreTime = 0;
+                    //double sixteenCoreTime = 0;
+                    for (int i = 1; i <= 100; i++)
+                    {
+                        var sum = 0.0;
+                        for (int j = 0; j < 5; j++) sum += tgs.ComputeTimes(i);
+                        sum = sum / 5;
+                        //Console.Write("{0}\t", sum.ToString("F2"));
+                        str = str + sum.ToString("F2") + "\t";
+                    }
+                    str = str + " :end";
+                    //string str = timeUsed.ToString("F2") + "," + numSplit.ToString();
+                    byte[] byteArray = Encoding.ASCII.GetBytes(str);
+                    MemoryStream dataStream = new MemoryStream(byteArray);
+
+                    blockBlob.UploadFromStream(dataStream);
+                    numSplit = 0;
+                }
+                /*else
+                {
+                    var tmpName = Path.GetFileName(workingFile.Substring(workingFile.LastIndexOf("\\") + 1));
+                    string str = tmpName + "," + timeUsed.ToString("F2") + "," + numSplit.ToString() + "\n";
+                    File.AppendAllText(Config.WriteResultLocally, str);
+                    numSplit = 0;
+                }*/
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine(e.ToString());
+            }
+        }
+
+        private void WriteSimulatedDotFile()
+        {
+            try
+            {
+                //if (Config.WriteResultLocally.Length == 0)
+                {
+                    CloudStorageAccount csa = CloudStorageAccount.Parse(Common.Utils.BlobAddress);
+                    var tmpName = Path.GetFileName(workingFile.Substring(workingFile.LastIndexOf("\\") + 1)) + ".dot";
+                    var blobName = new FileInfo(tmpName).Name;
+
+                    var blobClient = csa.CreateCloudBlobClient();
+                    var container = blobClient.GetContainerReference(Common.Utils.SimulatedDotFolder);
+                    container.CreateIfNotExists();
+                    var uploadName = blobName;
+                    CloudBlockBlob blockBlob = container.GetBlockBlobReference(uploadName);
+                    string str = tgs.ToDot();
+                    //string str = timeUsed.ToString("F2") + "," + numSplit.ToString();
+                    byte[] byteArray = Encoding.ASCII.GetBytes(str);
+                    MemoryStream dataStream = new MemoryStream(byteArray);
+
+                    blockBlob.UploadFromStream(dataStream);
+                    //numSplit = 0;
+                }
+                /*else
+                {
+                    var tmpName = Path.GetFileName(workingFile.Substring(workingFile.LastIndexOf("\\") + 1));
+                    string str = tmpName + "," + timeUsed.ToString("F2") + "," + numSplit.ToString() + "\n";
+                    File.AppendAllText(Config.WriteResultLocally, str);
+                    numSplit = 0;
+                }*/
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine(e.ToString());
+            }
+        }
+
         private void WriteOutcome(string Outcome)
         {
             try
@@ -1351,6 +1751,7 @@ namespace ServerStateful
 
         private async Task SendCallTree(HttpClient httpClient, string address, cba.Util.BoogieVerifyOptions.SplitState state)
         {
+            Log.WriteLine(Log.Info, string.Format("picking up: " + state.Name));
             string callSitesMsg = "";
             foreach (var ct in state.CallTree)
             {
@@ -1371,6 +1772,11 @@ namespace ServerStateful
                                             HttpUtil.SplitNodes, splitNodesMsg,
                                             HttpUtil.InputFile, workingFile));
             await httpClient.PostAsync(address, tmp);
+        }
+
+        private async Task SendNewCallTree(HttpListenerContext context, Dictionary<string, string> msgContent)
+        {
+
         }
 
         private async Task SendLoadCallTree(HttpClient httpClient, string address, cba.Util.BoogieVerifyOptions.SplitState state)
@@ -1436,6 +1842,7 @@ namespace ServerStateful
          
         private async Task CleanCallTreeQueue()
         {
+            Log.WriteLine(Log.Info, string.Format("INSIIDE CLEAN CTQ"));
             IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState> callTreeQueue = await StateManager.GetOrAddAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
             while (true)
             {
@@ -1461,49 +1868,59 @@ namespace ServerStateful
 
         private async Task<bool> CheckCompletion()
         {
+            /*ConditionalValue<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>> x = await StateManager.TryGetAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
+            if (!x.HasValue)
+                Log.WriteLine(Log.Info, string.Format("not found queue"));*/
             IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState> callTreeQueue = await StateManager.GetOrAddAsync<IReliableConcurrentQueue<BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
             IReliableDictionary<string, Tuple<bool, string>> clientState = await StateManager.GetOrAddAsync<IReliableDictionary<string, Tuple<bool, string>>>(Common.Utils.ClientStates);
 
+            if (callTreeQueue.Count == 0)
+                Thread.Sleep(1000);
+
             if (callTreeQueue.Count > 0)
-            { 
+            {
                 return false;
             }
-            else 
-
-            foreach (var client in partitionInfo)
+            else
             {
-                var id = client.Id.ToString();
-                while (true)
+                foreach (var client in partitionInfo)
                 {
-                    try
+                    var id = client.Id.ToString();
+                    while (true)
                     {
-                        using (var tx = this.StateManager.CreateTransaction())
+                        try
                         {
-                            var status = await clientState.TryGetValueAsync(tx, id);
-                            if (status.HasValue)
+                            using (var tx = this.StateManager.CreateTransaction())
                             {
-                                if (status.Value.Item1)
+                                var status = await clientState.TryGetValueAsync(tx, id);
+                                if (status.HasValue)
                                 {
-                                    await tx.CommitAsync(); 
-                                    return false;
-                                } 
+                                    if (status.Value.Item1)
+                                    {
+                                        await tx.CommitAsync();
+                                        return false;
+                                    }
+                                }
+                                await tx.CommitAsync();
                             }
-                            await tx.CommitAsync();
+                            break;
                         }
-                        break;
+                        catch (Exception e)
+                        {
+                            Log.WriteLine(Log.Error, e.ToString());
+                        }
+                        await Task.Delay(TimeSpan.FromMilliseconds(Common.Utils.DelayTime));
                     }
-                    catch (Exception e)
-                    {
-                        Log.WriteLine(Log.Error, e.ToString());
-                    }
-                    await Task.Delay(TimeSpan.FromMilliseconds(Common.Utils.DelayTime));
                 }
+                return true;
             }
-            return true;
         }
 
         private async Task<bool> CheckCompleteCompletion(int prtCnt, CancellationToken cancellationToken)
         {
+            /*ConditionalValue<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>> x = await StateManager.TryGetAsync<IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
+            if (!x.HasValue)
+                Log.WriteLine(Log.Info, string.Format("not found queue"));*/
             IReliableConcurrentQueue<cba.Util.BoogieVerifyOptions.SplitState> callTreeQueue = await StateManager.GetOrAddAsync<IReliableConcurrentQueue<BoogieVerifyOptions.SplitState>>(Common.Utils.CallTreeQueue);
             IReliableDictionary<string, Tuple<bool, string>> clientState = await StateManager.GetOrAddAsync<IReliableDictionary<string, Tuple<bool, string>>>(Common.Utils.ClientStates);
             IReliableDictionary<string, cba.Util.BoogieVerifyOptions.SplitState> handledCallTrees = await StateManager.GetOrAddAsync<IReliableDictionary<string, cba.Util.BoogieVerifyOptions.SplitState>>(Common.Utils.HandledCallTrees);

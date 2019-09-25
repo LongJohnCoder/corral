@@ -17,6 +17,7 @@ namespace Common
         Dictionary<int, HashSet<Tuple<int, string, double>>> Edges; 
         DateTime startTime;
         int clientNo = 0;
+        //public string lastTaskSent;
         public TimeGraph(List<string> clients)
         { 
             Nodes = new Dictionary<int, string>();
@@ -117,6 +118,7 @@ namespace Common
         {
             Debug.Assert(MachineMaps.Keys.Contains(n1));
             Debug.Assert(MachineMaps.Keys.Contains(n2));
+            //lastTaskSent = label;
             lock (MachineMaps)
             {
                 bool selfLoading = false;
